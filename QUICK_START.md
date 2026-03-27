@@ -42,7 +42,7 @@ I recommend opening **3 terminals** and labeling them:
 ### Hardware
 - ESP32 development board (WROOM-32, WROVER-B, or ESP32-S)
 - USB cable
-- WiFi network (2.4 GHz)
+- WiFi network (2.4 GHz) — **see Network Setup section below before starting**
 
 ### Software
 
@@ -55,6 +55,84 @@ I recommend opening **3 terminals** and labeling them:
 - **Option B:** [Node.js](https://nodejs.org/) v14+ (if you prefer manual setup)
 
 **Note:** If you use Docker, you don't need Node.js installed!
+
+---
+
+## ⚠️ Network Setup (Read This First!)
+
+Getting the ESP32 and your server on the **same network** is the most common source of frustration. Read this section carefully before doing anything else.
+
+### The Core Requirement
+
+Your ESP32 and your computer must be on the **same subnet** — i.e., they must get IP addresses in the same range (e.g., both on `192.168.1.x`). If they're on different subnets, they cannot communicate even if they're both connected to the same hotspot.
+
+### Best Option: Home/Office Router
+
+Connect both your ESP32 and computer to a regular 2.4 GHz WiFi router. This is the simplest setup — both devices will get IPs on the same subnet automatically.
+
+**Find your computer's IP:**
+- macOS/Linux: `ifconfig | grep "inet " | grep -v 127.0.0.1`
+- Windows: `ipconfig | findstr "IPv4"`
+
+Use that IP as your server URL: `http://YOUR_IP:3000/api/sram`
+
+### University WiFi
+
+University networks typically block device-to-device communication and require browser-based login. **ESP32 cannot connect to these networks.** You'll need an alternative — see iPhone Hotspot below.
+
+### iPhone Hotspot (Common Pitfall)
+
+iPhone hotspots work but have a tricky subnet issue when **Maximize Compatibility** is enabled.
+
+**The problem:** When Maximize Compatibility is ON (required for ESP32's 2.4 GHz), iPhone assigns different subnets to different types of clients:
+- WiFi clients (ESP32) → `172.20.10.x`
+- USB-tethered clients (your Mac) → `192.0.0.x`
+
+These subnets cannot reach each other, so uploads will fail even though both devices appear connected.
+
+**Fix — force your Mac onto the same subnet as the ESP32:**
+
+1. Enable hotspot on iPhone with **Maximize Compatibility ON**
+2. Connect your Mac to the hotspot via WiFi
+3. Go to **System Settings → WiFi → [your hotspot] → Details → TCP/IP**
+4. Change "Configure IPv4" to **Manual**
+5. Set IP to `172.20.10.3`, Subnet Mask to `255.255.255.240`, Router to `172.20.10.1`
+6. Run `ifconfig | grep "inet "` — you should now see both `192.0.0.2` and `172.20.10.3`
+7. Use `172.20.10.3` as your server IP in all URLs
+
+**Verify they can talk:**
+```bash
+# Should return "Cannot GET /api/sram" (which means it's reachable!)
+curl http://172.20.10.3:3000/api/sram
+```
+
+**Also disable macOS firewall temporarily while testing:**
+```bash
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
+```
+
+**Also add a route so your Mac knows how to reply to the ESP32:**
+```bash
+sudo route -n add -net 172.20.10.0/24 192.0.0.1
+```
+
+> **Note:** If you have a VPN or iCloud Private Relay active, disable it. These create extra network tunnels (visible as `utun` interfaces) that can interfere with local network routing.
+
+### Android Hotspot
+
+Android hotspots do **not** have the subnet splitting issue that iPhones have. Both your computer and ESP32 will land on the same subnet automatically. Recommended over iPhone if available.
+
+### Confirming Your Setup Works
+
+Before flashing any sketch, confirm connectivity:
+
+1. Start your server (Step 1 below)
+2. From your Mac, run:
+   ```bash
+   curl -u "esp:password" http://YOUR_SERVER_IP:3000/api/sram
+   ```
+   You should see `Cannot GET /api/sram` — this means the server is reachable (it only accepts POST).
+3. Only then flash the ESP32 sketch
 
 ---
 
@@ -162,28 +240,74 @@ Server runs on http://localhost:8080
 
 2. Update WiFi credentials:
    ```cpp
-   const char* WIFI_SSID = "YourWiFiName";
-   const char* WIFI_PASSWORD = "YourWiFiPassword";
+   #define WIFI_SSID "YourWiFiName"
+   #define WIFI_PASSWORD "YourWiFiPassword"
    ```
+
+   > **Tip:** Avoid special characters (apostrophes, spaces) in your hotspot name. Use something simple like `esp32test`. Special characters in SSIDs can cause connection failures on ESP32.
 
 3. Update server URL (replace with your computer's IP):
    ```cpp
-   const char* MEASUREMENT_SERVER_URL = "http://192.168.1.XXX:3000/api/sram";
+   #define MEASUREMENT_SERVER_URL "http://192.168.1.XXX:3000/api/sram"
    ```
-   
-   **Find your IP:**
-   - **macOS/Linux:** `ifconfig | grep "inet "`
-   - **Windows:** `ipconfig`
+
+   Find your IP:
+   - macOS/Linux: `ifconfig | grep "inet " | grep -v 127.0.0.1`
+   - Windows: `ipconfig | findstr "IPv4"`
+
+   > **Tip:** If using iPhone hotspot with the manual IP fix described above, use `172.20.10.3` (or whatever IP you set manually).
 
 4. Set ESP ID (use 1 for your first device):
    ```cpp
-   const int ESP_DEVICE_ID = 1;
+   #define ESP_DEVICE_ID 1
    ```
 
 5. **Optional:** Use 128 bytes for faster collection:
    ```cpp
    #define SRAM_READ_SIZE 128  // Sufficient for authentication
    ```
+
+### ESP32 WiFi Setup — Correct Init Order
+
+The order of WiFi initialization calls matters. Use this exact sequence to avoid stale credential issues:
+
+```cpp
+WiFi.disconnect(true, true);  // clear old state
+delay(1000);
+WiFi.persistent(false);       // don't cache credentials to flash
+WiFi.mode(WIFI_STA);
+delay(100);
+WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+```
+
+Also increase the Serial initialization delay so print statements appear correctly:
+
+```cpp
+Serial.begin(115200);
+delay(1000);  // use 1000ms, not 100ms
+```
+
+### Debugging WiFi Status Codes
+
+If WiFi fails to connect, print the status code during the connection loop:
+
+```cpp
+while (WiFi.status() != WL_CONNECTED && attempts < 60) {
+    delay(500);
+    Serial.print(".");
+    Serial.print(WiFi.status());
+    attempts++;
+}
+```
+
+| Code | Meaning | Fix |
+|------|---------|-----|
+| `1` | No SSID found | Hotspot not visible or wrong name |
+| `4` | Connect failed | Wrong password |
+| `6` | Wrong password | Check password, try simpler one |
+| `255` | Idle / not started | Check init order above |
+
+A common pattern is `6` then `1` — this means the password was rejected and then the network disappeared. The most likely cause is **5 GHz only mode**. On iPhone: **Settings → Personal Hotspot → Maximize Compatibility → ON** to force 2.4 GHz.
 
 ### Upload & Collect
 
@@ -213,7 +337,7 @@ sram-puf-measurement  | [2025-10-08T11:42:44.795Z] POST /api/sram
 sram-puf-measurement  |   [DATA] ESP ID: 1
 sram-puf-measurement  |   [DATA] Data Length: 256 chars
 sram-puf-measurement  |   [SUCCESS] Stored measurement ID: 1
-sram-puf-measurement  | [2025-10-08T11:42:56.761Z] POST /api/sram
+sram-puf-measurement  | [2025-10-08T11:42:56.795Z] POST /api/sram
 sram-puf-measurement  |   [DATA] ESP ID: 1
 sram-puf-measurement  |   [DATA] Data Length: 256 chars
 sram-puf-measurement  |   [SUCCESS] Stored measurement ID: 2
@@ -253,7 +377,7 @@ See the success rate table in Step 5 for detailed statistics.
 curl -u "esp:password" http://localhost:3000/api/export/1 -o measurements.txt
 
 # Or with your network IP (if server is remote)
-# curl -u "esp:password" http://192.168.1.155:3000/api/export/1 -o measurements.txt
+# curl -u "esp:password" http://172.20.10.3:3000/api/export/1 -o measurements.txt
 ```
 
 **Credentials:** See `server/measurement-server/env.example` (default: `esp` / `password`)
@@ -286,21 +410,33 @@ python pufchallenge.py -i ../../measurements.txt
 **Terminal 3 (Tools):**
 Edit config file (use your preferred editor):
 ```bash
-# From anywhere - use full path
-vim auth-server/config.js
-# Or: nano, code, etc.
+# From repository root
+nano server/auth-server/config.js
 ```
 
-**Add your API token:**
+The file structure must look exactly like this — pay close attention to closing braces and commas:
+
 ```javascript
-const apiKeys = {
-    '9b6fa081f05bc4b197f4ff7e79f01...': {  // Your API token from Step 3
-        deviceId: 'ESP32_001',
-        description: 'My first ESP32',
-        registered: '2024-01-15'
-    },
+module.exports = {
+    port: process.env.PORT || 8080,
+
+    apiKeys: {
+        'YOUR_API_TOKEN_HERE': {
+            deviceId: 'ESP32_001',
+            description: 'My first ESP32',
+            registered: '2024-01-15'
+        },
+        // Add more devices here, each entry needs a trailing comma except the last
+    },  // <-- this comma is required! closes apiKeys, not the whole export
+
+    security: {
+        debugEndpoints: true,
+        logAttempts: true
+    }
 };
 ```
+
+> **Common mistake:** Placing the `security` block *inside* `apiKeys` instead of as a sibling. If auth-server keeps restarting, check `docker logs sram-puf-auth` — a `SyntaxError: Unexpected token` means a missing comma or misplaced brace in config.js.
 
 **Apply changes:**
 
@@ -308,8 +444,6 @@ const apiKeys = {
 ```bash
 # In ./server/
 docker compose restart auth-server
-
-# If running manually, the server auto-reloads (with nodemon)
 ```
 
 **Note:** The config.js file is mounted as a volume in Docker, so you can edit it directly without rebuilding the container!
@@ -320,12 +454,12 @@ docker compose restart auth-server
 
 2. Update configuration:
    ```cpp
-   const char* WIFI_SSID = "YourWiFiName";
-   const char* WIFI_PASSWORD = "YourWiFiPassword";
-   const char* AUTH_SERVER_URL = "http://192.168.1.155:8080/";
-   
+   #define WIFI_SSID "YourWiFiName"
+   #define WIFI_PASSWORD "YourWiFiPassword"
+   #define AUTH_SERVER_URL "http://YOUR_SERVER_IP:8080/"
+
    // Paste your PUF Challenge here:
-   const char* pufChallenge = "f3f3dfffefbabffff3fbff7fb6efbeff...";
+   #define PUF_CHALLENGE "f3f3dfffefbabffff3fbff7fb6efbeff..."
    ```
 
 3. Upload to ESP32
@@ -377,9 +511,6 @@ Done. Reset ESP32 to try again.
 **Monitor authentication live (if using Docker):**
 
 **Terminal 2 (Server Logs):**
-
-If you still have the logs from the measurement server running, press `Ctrl+C` to stop viewing logs.
-
 ```bash
 # From repository root
 cd server
@@ -393,18 +524,6 @@ sram-puf-auth  |   ✅ SUCCESS: ESP32_001 authenticated
 sram-puf-auth  |   ├─ Description: Test Device 1
 sram-puf-auth  |   ├─ Token: 260f1105...975d358a
 sram-puf-auth  |   └─ Total successful: 1
-sram-puf-auth  |
-sram-puf-auth  | [2025-10-08T11:50:56.018Z] GET / from 192.168.65.1
-sram-puf-auth  |   ✅ SUCCESS: ESP32_001 authenticated
-sram-puf-auth  |   ├─ Description: Test Device 1
-sram-puf-auth  |   ├─ Token: 260f1105...975d358a
-sram-puf-auth  |   └─ Total successful: 2
-sram-puf-auth  |
-sram-puf-auth  | [2025-10-08T11:50:38.400Z] GET / from 192.168.65.1
-sram-puf-auth  |   ❌ FAILED: Invalid/unknown token
-sram-puf-auth  |   ├─ Token received: 458095b1...092a9d11
-sram-puf-auth  |   ├─ Reason: Device not registered
-sram-puf-auth  |   └─ Total failed attempts: 1
 ```
 
 Press `Ctrl+C` to stop viewing logs.
@@ -431,16 +550,31 @@ The number of measurements you collect directly affects authentication reliabili
 
 If authentication fails occasionally, collect more measurements and regenerate the PUF challenge.
 
+### Why a Different ESP32 Cannot Authenticate
+
+If you flash the same sketch onto a different ESP32, authentication will fail — and that's intentional. Each ESP32 has physically unique SRAM startup values due to manufacturing variation. The PUF challenge was generated from your specific device's measurements, and the API token in `config.js` was derived from your device's SRAM bits. A different device produces different bits → different token → server rejects it. The hardware itself is the password, not the code.
+
 ---
 
 ## Troubleshooting
+
+### Auth Server Keeps Restarting
+
+Check the logs:
+```bash
+docker logs sram-puf-auth
+```
+
+A `SyntaxError` in `config.js` is the most common cause. Things to check:
+- `apiKeys` must be closed with `},` (comma!) before the `security` block
+- `security` must be a sibling of `apiKeys`, not nested inside it
+- Every device entry except the last needs a trailing comma
 
 ### Authentication Failed
 
 **Most Common Cause: Not Enough Measurements**
 - Collect 30+ measurements instead of 10-20
 - Regenerate PUF challenge with more data
-- See success rates table above
 
 **Check PUF Challenge:**
 - Verify you copied the complete challenge (no truncation)
@@ -454,16 +588,20 @@ If authentication fails occasionally, collect more measurements and regenerate t
 
 ### WiFi Connection Failed
 
-- Verify SSID and password (case-sensitive!)
-- ESP32 only supports **2.4 GHz** WiFi (not 5 GHz)
-- Check WiFi signal strength
+- Verify SSID and password (case-sensitive, no special characters)
+- ESP32 only supports **2.4 GHz** WiFi — on iPhone hotspot, enable **Maximize Compatibility**
+- Print WiFi status codes during the loop to diagnose (see Step 2 above)
+- Use the correct WiFi init order (see Step 2 above)
+- Increase `Serial.begin` delay to 1000ms if prints aren't showing
 
-### Cannot Connect to Server
+### Cannot Connect to Server (connection refused / -1)
 
-- Verify server is running (`docker ps` or check terminal)
-- Test server: `curl http://localhost:8080/health`
-- Check firewall settings
-- Verify IP address is correct
+1. Confirm server is running: `docker compose ps`
+2. Confirm server IP is reachable from your Mac: `curl http://YOUR_IP:3000/api/sram`
+3. Check your Mac's firewall: `sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off`
+4. Confirm ESP32 and Mac are on the **same subnet** (see Network Setup section)
+5. If using iPhone hotspot, follow the manual IP fix in the Network Setup section
+6. Add subnet route on Mac: `sudo route -n add -net 172.20.10.0/24 192.0.0.1`
 
 ### Serial Monitor Shows Garbage
 
@@ -475,10 +613,7 @@ If authentication fails occasionally, collect more measurements and regenerate t
 
 - Check server logs for errors
 - Verify ESP_DEVICE_ID matches URL (`/api/export/1` → ID = 1)
-- Test server endpoint:
-  ```bash
-  curl http://localhost:3000/health
-  ```
+- Test server endpoint: `curl http://localhost:3000/health`
 
 ---
 
@@ -512,15 +647,9 @@ deactivate
 
 #### Option B: Global Installation
 
-**Terminal 3 (Tools):**
 ```bash
-# From repository root
 cd tools/analysis
-
-# Install dependencies globally
 pip install -r requirements.txt
-
-# Analyze measurements
 python hamming_analysis.py -i ../../measurements.txt -n ESP32_01 -c 1
 ```
 
@@ -555,65 +684,13 @@ See [README.md](README.md) → Security Considerations
 
 ---
 
-## Optional: Testing & Development
-
-### Test Servers Without Hardware
-
-Want to verify servers work before connecting ESP32?
-
-**Terminal 1:**
-```bash
-# From repository root
-cd server/auth-server
-npm start
-```
-
-**Terminal 2:**
-```bash
-# From repository root (new terminal!)
-cd server/auth-server
-node test_auth.js
-```
-
-Expected output:
-```
-✓ Health check passed
-✓ Valid token authenticated
-✗ Invalid token rejected (expected)
-```
-
-### Read SRAM Without Upload
-
-Want to see raw SRAM data?
-
-1. Flash `hardware/sram_reader_basic.ino`
-2. Open Serial Monitor
-3. See hexadecimal SRAM values
-
-**Remember:** Power cycle (not reset) to see different values!
-
-### Manual Analysis
-
-Download and inspect measurements:
-
-**Terminal 3 (or any terminal):**
-```bash
-# Get all measurements for device 1
-curl -u "esp:password" http://localhost:3000/api/export/1
-
-# Check server statistics
-curl http://localhost:3000/api/stats
-```
-
----
-
 ## Important Notes
 
 - This is a **Proof-of-Concept** for learning and research
-- **Not production-ready** - add security hardening before deployment
+- **Not production-ready** — add security hardening before deployment
 - SRAM PUF responses can vary with temperature (~10% at -20°C)
-- **Power cycle required** - soft reset doesn't change SRAM values
-- Minimum **30 measurements** recommended (more is better - 50-100+ for higher reliability)
+- **Power cycle required** — soft reset doesn't change SRAM values
+- Minimum **30 measurements** recommended (more is better — 50-100+ for higher reliability)
 
 ---
 

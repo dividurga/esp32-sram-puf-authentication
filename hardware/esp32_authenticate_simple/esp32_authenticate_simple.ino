@@ -29,19 +29,19 @@
 // CONFIGURATION - Edit if NOT using config.h
 // ============================================
 #ifndef WIFI_SSID
-    #define WIFI_SSID "YOUR_WIFI_SSID"
+    #define WIFI_SSID "Divi iPhone"
 #endif
 
 #ifndef WIFI_PASSWORD
-    #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+    #define WIFI_PASSWORD "test1234"
 #endif
 
 #ifndef AUTH_SERVER_URL
-    #define AUTH_SERVER_URL "http://192.168.1.100:8080/"
+    #define AUTH_SERVER_URL "http://172.20.10.3:8080/"
 #endif
 
 #ifndef PUF_CHALLENGE
-    #define PUF_CHALLENGE "f3f3dfffefbabffff3fbff7fb6efbeff"
+    #define PUF_CHALLENGE "36f573fffd8877df6f7be7fbb5b4fe5f"
 #endif
 
 #ifndef SRAM_ADDRESS
@@ -239,7 +239,7 @@ bool authenticateWithServer() {
 
 void setup() {
     Serial.begin(115200);
-    delay(100);
+    delay(1000);
     
     Serial.println("\n========================================");
     Serial.println("ESP32 RTC SLOW Memory PUF Authentication");

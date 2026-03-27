@@ -86,7 +86,7 @@ iPhone hotspots work but have a tricky subnet issue when **Maximize Compatibilit
 
 **The problem:** When Maximize Compatibility is ON (required for ESP32's 2.4 GHz), iPhone assigns different subnets to different types of clients:
 - WiFi clients (ESP32) → `172.20.10.x`
-- USB-tethered clients (your Mac) → `192.0.0.x`
+- "Tethered clients" (your Mac and other Apple Devices) → `192.0.0.x`
 
 These subnets cannot reach each other, so uploads will fail even though both devices appear connected.
 
@@ -96,9 +96,9 @@ These subnets cannot reach each other, so uploads will fail even though both dev
 2. Connect your Mac to the hotspot via WiFi
 3. Go to **System Settings → WiFi → [your hotspot] → Details → TCP/IP**
 4. Change "Configure IPv4" to **Manual**
-5. Set IP to `172.20.10.3`, Subnet Mask to `255.255.255.240`, Router to `172.20.10.1`
-6. Run `ifconfig | grep "inet "` — you should now see both `192.0.0.2` and `172.20.10.3`
-7. Use `172.20.10.3` as your server IP in all URLs
+5. Set IP to `<first seven digits of your ESP32's IP>.x`, different from your ESP32's IP, Subnet Mask to `255.255.255.240`
+6. Run `ifconfig | grep "inet "` — you should now see the assigned IP pop up
+7. Use the assigbed IP as your server IP in all URLs
 
 **Verify they can talk:**
 ```bash
@@ -106,21 +106,11 @@ These subnets cannot reach each other, so uploads will fail even though both dev
 curl http://172.20.10.3:3000/api/sram
 ```
 
-**Also disable macOS firewall temporarily while testing:**
-```bash
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
-```
-
-**Also add a route so your Mac knows how to reply to the ESP32:**
-```bash
-sudo route -n add -net 172.20.10.0/24 192.0.0.1
-```
-
 > **Note:** If you have a VPN or iCloud Private Relay active, disable it. These create extra network tunnels (visible as `utun` interfaces) that can interfere with local network routing.
 
 ### Android Hotspot
 
-Android hotspots do **not** have the subnet splitting issue that iPhones have. Both your computer and ESP32 will land on the same subnet automatically. Recommended over iPhone if available.
+Android hotspots do **not** have the subnet splitting issue that iPhones have. Both your computer and ESP32 will land on the same subnet automatically. Recommended over iPhone if available. Untested, but per an internet search, this should be the case.
 
 ### Confirming Your Setup Works
 
